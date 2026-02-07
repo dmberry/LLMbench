@@ -1,0 +1,280 @@
+"use client";
+
+/**
+ * Authentication Context for LLMbench
+ *
+ * Adapted from CCS-WB. Provides user auth state and sign-in/sign-out methods.
+ */
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
+import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import type { User, Session, AuthError } from "@supabase/supabase-js";
+import type { Profile, ProfileInsert } from "@/lib/supabase/types";
+
+export type AuthProvider = "google" | "github" | "apple";
+
+interface AuthContextValue {
+  isSupabaseEnabled: boolean;
+  user: User | null;
+  profile: Profile | null;
+  session: Session | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  signInWithProvider: (provider: AuthProvider) => Promise<{ error: AuthError | null }>;
+  signOut: () => Promise<{ error: AuthError | null }>;
+  updateProfile: (updates: Partial<Profile>) => Promise<{ error: Error | null }>;
+  showLoginModal: boolean;
+  setShowLoginModal: (show: boolean) => void;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+const PROFILE_CACHE_KEY = "llmbench-profile-cache";
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+
+  const isSupabaseEnabled = isSupabaseConfigured();
+  const supabase = isSupabaseEnabled ? getSupabaseClient() : null;
+
+  const getCachedProfile = useCallback((userId: string): Profile | null => {
+    try {
+      const cached = localStorage.getItem(PROFILE_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.id === userId && Date.now() - parsed._cachedAt < 300000) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore cache errors
+    }
+    return null;
+  }, []);
+
+  const cacheProfile = useCallback((p: Profile) => {
+    try {
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ ...p, _cachedAt: Date.now() }));
+    } catch {
+      // Ignore cache errors
+    }
+  }, []);
+
+  const fetchProfile = useCallback(async (userId: string) => {
+    if (!supabase) return null;
+    const cached = getCachedProfile(userId);
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single()
+        .abortSignal(controller.signal);
+
+      clearTimeout(timeoutId);
+
+      if (error) {
+        if (error.code !== "PGRST116") {
+          console.warn("Profile fetch issue:", error.message || error.code);
+        }
+        return cached;
+      }
+
+      if (data) cacheProfile(data);
+      return data;
+    } catch {
+      if (cached) return cached;
+      return null;
+    }
+  }, [supabase, getCachedProfile, cacheProfile]);
+
+  const createProfile = useCallback(async (u: User) => {
+    if (!supabase) return null;
+
+    const displayName = u.user_metadata?.full_name || u.email?.split("@")[0] || "User";
+    const nameParts = displayName.split(" ").filter((n: string) => n.length > 0);
+    const initials = nameParts.length === 1
+      ? nameParts[0].slice(0, 3).toUpperCase()
+      : nameParts.map((n: string) => n[0]).join("").toUpperCase().slice(0, 3);
+
+    const newProfile: ProfileInsert = {
+      id: u.id,
+      display_name: displayName,
+      initials,
+      affiliation: null,
+      avatar_url: u.user_metadata?.avatar_url || null,
+    };
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("profiles")
+        .upsert(newProfile, { onConflict: "id" })
+        .select()
+        .single();
+
+      if (error) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: insertData, error: insertError } = await (supabase as any)
+          .from("profiles")
+          .insert(newProfile)
+          .select()
+          .single();
+
+        if (insertError) return null;
+        return insertData;
+      }
+      return data;
+    } catch {
+      return null;
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    if (!supabase) {
+      setIsLoading(false);
+      return;
+    }
+
+    const initAuth = async () => {
+      const timeoutId = setTimeout(() => {
+        if (mounted) setIsLoading(false);
+      }, 5000);
+
+      try {
+        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error("Error getting session:", error);
+        } else if (initialSession?.user && mounted) {
+          setSession(initialSession);
+          setUser(initialSession.user);
+          fetchProfile(initialSession.user.id).then(async (userProfile) => {
+            if (!mounted) return;
+            if (!userProfile) userProfile = await createProfile(initialSession.user);
+            if (mounted) setProfile(userProfile);
+          });
+        }
+      } catch (error) {
+        console.error("Error initializing auth:", error);
+      } finally {
+        clearTimeout(timeoutId);
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, newSession) => {
+        if (!mounted) return;
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
+
+        if (newSession?.user) {
+          let userProfile = await fetchProfile(newSession.user.id);
+          if (!userProfile) userProfile = await createProfile(newSession.user);
+          if (mounted) setProfile(userProfile);
+          if (event === "SIGNED_IN") setShowLoginModal(false);
+        } else {
+          setProfile(null);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase, fetchProfile, createProfile]);
+
+  const signInWithProvider = useCallback(async (provider: AuthProvider) => {
+    if (!supabase) {
+      return { error: new Error("Supabase not configured") as unknown as AuthError };
+    }
+    const currentPath = window.location.pathname;
+    const redirectUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(currentPath)}`;
+    const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: redirectUrl } });
+    return { error };
+  }, [supabase]);
+
+  const signOut = useCallback(async () => {
+    if (!supabase) {
+      return { error: new Error("Supabase not configured") as unknown as AuthError };
+    }
+    try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch { /* ignore */ }
+
+    try {
+      const result = await Promise.race([
+        supabase.auth.signOut(),
+        new Promise<{ error: AuthError }>((_, reject) =>
+          setTimeout(() => reject(new Error("Sign out timed out")), 5000)
+        ),
+      ]);
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+      return result;
+    } catch (err) {
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+      return { error: err as AuthError };
+    }
+  }, [supabase]);
+
+  const updateProfile = useCallback(async (updates: Partial<Profile>) => {
+    if (!supabase || !user) return { error: new Error("Not authenticated") };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).from("profiles").update(updates).eq("id", user.id);
+    if (!error) {
+      const updatedProfile = await fetchProfile(user.id);
+      setProfile(updatedProfile);
+    }
+    return { error: error ? new Error(error.message) : null };
+  }, [supabase, user, fetchProfile]);
+
+  return (
+    <AuthContext.Provider
+      value={{
+        isSupabaseEnabled,
+        user,
+        profile,
+        session,
+        isLoading,
+        isAuthenticated: !!user,
+        signInWithProvider,
+        signOut,
+        updateProfile,
+        showLoginModal,
+        setShowLoginModal,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+}
