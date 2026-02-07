@@ -108,7 +108,7 @@
   @apply inline-flex items-center justify-center font-sans text-body-sm font-medium;
   @apply px-5 py-2.5 border border-parchment-dark rounded-sm;
   @apply transition-all duration-300 ease-out;
-  @apply focus:outline-none focus:ring-2 focus:ring-burgundy focus:ring-offset-2 focus:ring-offset-background;
+  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-burgundy focus-visible:ring-offset-2 focus-visible:ring-offset-background;
 }
 .btn-editorial-primary {
   @apply btn-editorial bg-burgundy text-primary-foreground border-burgundy;

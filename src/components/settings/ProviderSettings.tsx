@@ -2,23 +2,41 @@
 
 import React from "react";
 import { X, Eye, EyeOff, Moon, Sun } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useProviderSettings } from "@/context/ProviderSettingsContext";
-import { PROVIDER_CONFIGS } from "@/lib/ai/config";
+import {
+  initializeModels,
+  getProviderConfigWithModels,
+  getAllProviders,
+} from "@/lib/ai/config";
 import type { AIProvider, ProviderSlot } from "@/types/ai-settings";
+
+/** Provider-specific placeholder text for the Custom Model input */
+const CUSTOM_PLACEHOLDERS: Record<AIProvider, string> = {
+  anthropic: "e.g. claude-opus-4-20250514, claude-3-opus-20240229",
+  openai: "e.g. gpt-4-turbo, o3-mini, chatgpt-4o-latest",
+  google: "e.g. gemini-2.0-flash, gemini-1.5-pro-latest",
+  ollama: "e.g. llama3.2:latest, codellama, phi3",
+  "openai-compatible": "Enter model identifier",
+};
 
 function SlotEditor({
   panel,
   slot,
+  modelsLoaded,
   onUpdate,
 }: {
   panel: "A" | "B";
   slot: ProviderSlot;
+  modelsLoaded: boolean;
   onUpdate: (updates: Partial<ProviderSlot>) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
-  const providerConfig = PROVIDER_CONFIGS[slot.provider];
-  const providers = Object.values(PROVIDER_CONFIGS);
+
+  // Use dynamic models when loaded, otherwise fall back to static config
+  const providerConfig = getProviderConfigWithModels(slot.provider);
+  const providers = getAllProviders();
+  const showCustomModel = slot.model === "custom";
 
   return (
     <div className="space-y-3">
@@ -35,7 +53,7 @@ function SlotEditor({
           value={slot.provider}
           onChange={(e) => {
             const provider = e.target.value as AIProvider;
-            const config = PROVIDER_CONFIGS[provider];
+            const config = getProviderConfigWithModels(provider);
             onUpdate({
               provider,
               model: config.models[0]?.id || "custom",
@@ -58,10 +76,13 @@ function SlotEditor({
       <div>
         <label className="block text-caption text-muted-foreground mb-1">
           Model
+          {modelsLoaded && (
+            <span className="text-muted-foreground/50 ml-1">(from models.md)</span>
+          )}
         </label>
         <select
           value={slot.model}
-          onChange={(e) => onUpdate({ model: e.target.value })}
+          onChange={(e) => onUpdate({ model: e.target.value, customModelId: "" })}
           className="input-editorial w-full"
         >
           {providerConfig.models.map((m) => (
@@ -72,8 +93,8 @@ function SlotEditor({
         </select>
       </div>
 
-      {/* Custom model ID */}
-      {slot.model === "custom" && (
+      {/* Custom model ID — shown when "Custom Model" is selected */}
+      {showCustomModel && (
         <div>
           <label className="block text-caption text-muted-foreground mb-1">
             Custom Model ID
@@ -82,9 +103,12 @@ function SlotEditor({
             type="text"
             value={slot.customModelId || ""}
             onChange={(e) => onUpdate({ customModelId: e.target.value })}
-            placeholder="e.g. claude-opus-4-20250514"
+            placeholder={CUSTOM_PLACEHOLDERS[slot.provider]}
             className="input-editorial w-full"
           />
+          <p className="text-caption text-muted-foreground/60 mt-1">
+            Enter the exact model ID your provider expects.
+          </p>
         </div>
       )}
 
@@ -182,6 +206,12 @@ export default function ProviderSettings({
   const { slots, updateSlot, showSettings, setShowSettings } =
     useProviderSettings();
 
+  // Load dynamic models from /models.md on mount
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  useEffect(() => {
+    initializeModels().then(() => setModelsLoaded(true));
+  }, []);
+
   if (!showSettings) return null;
 
   return (
@@ -206,6 +236,7 @@ export default function ProviderSettings({
             <SlotEditor
               panel="A"
               slot={slots.A}
+              modelsLoaded={modelsLoaded}
               onUpdate={(updates) => updateSlot("A", updates)}
             />
           </div>
@@ -215,6 +246,7 @@ export default function ProviderSettings({
             <SlotEditor
               panel="B"
               slot={slots.B}
+              modelsLoaded={modelsLoaded}
               onUpdate={(updates) => updateSlot("B", updates)}
             />
           </div>
@@ -224,6 +256,7 @@ export default function ProviderSettings({
         <div className="px-6 py-3 border-t border-border flex items-center justify-between">
           <span className="text-caption text-muted-foreground">
             API keys are stored in your browser only.
+            {modelsLoaded && " Models loaded from models.md."}
           </span>
           {onToggleDark && (
             <button

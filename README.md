@@ -26,7 +26,11 @@ LLMbench emerges from the convergence of three research programmes.
 
 - **Multi-provider support.** Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama (local models), and any OpenAI-compatible endpoint. API keys are stored in the browser only, never sent to a server.
 
-- **Export.** Comparisons export as structured JSON, formatted plain text, or PDF with coloured annotation badges.
+- **Visual word diff.** Toggle a word-level diff view that highlights textual differences between the two outputs. Unique words are colour-coded (red for Panel A, green for Panel B) with synchronised scrolling and line numbers. Diff highlighting carries through to PDF export.
+
+- **Export.** Comparisons export as structured JSON (with word counts), formatted plain text, or side-by-side landscape PDF with coloured annotation badges and optional diff highlighting.
+
+- **Dynamic model configuration.** Available models are defined in a [`models.md`](public/models.md) file in the public directory. Add new models by editing the Markdown file and refreshing the browser, with no rebuild required. Every provider includes a "Custom Model" option for entering any model ID directly.
 
 - **Local persistence.** Comparisons save to browser localStorage. Name, load, and manage multiple comparison sessions.
 
@@ -75,20 +79,23 @@ Open [http://localhost:3000](http://localhost:3000). Click the gear icon to conf
 ## Architecture
 
 ```
+public/
+  models.md              # Editable model definitions (no rebuild needed)
 src/
   app/
-    api/generate/     # Fan-out API route (dispatches to both providers)
-    page.tsx           # Main workspace UI
+    api/generate/        # Fan-out API route (dispatches to both providers)
+    page.tsx             # Main workspace UI
   components/
-    annotations/       # CodeMirror annotation system (adapted from CCS-WB)
-    settings/          # Provider configuration modal
-    workspace/         # ProsePanel (CodeMirror wrapper), theme
-  context/             # Provider settings (localStorage-persisted)
-  hooks/               # Annotations, local storage, prompt dispatch
+    annotations/         # CodeMirror annotation system (adapted from CCS-WB)
+    settings/            # Provider configuration modal
+    workspace/           # ProsePanel, DiffPanel, theme
+  context/               # Provider settings (localStorage-persisted)
+  hooks/                 # Annotations, local storage, prompt dispatch
   lib/
-    ai/                # Unified AI client, provider configs
-    export/            # JSON, text, PDF export
-  types/               # TypeScript types for annotations, comparisons, settings
+    ai/                  # Unified AI client, provider configs, model loader
+    diff/                # Word-level diff computation
+    export/              # JSON, text, PDF export
+  types/                 # TypeScript types for annotations, comparisons, settings
 ```
 
 The fan-out API route receives a prompt and dispatches it simultaneously to both configured providers using `Promise.allSettled`, ensuring that a failure in one provider does not block the other. Each response carries provenance metadata (model identifier, temperature, response time) that is displayed in the panel header and preserved in exports.
@@ -100,6 +107,7 @@ The fan-out API route receives a prompt and dispatches it simultaneously to both
 - **Tailwind CSS v3** with an editorial colour palette (ivory, cream, parchment, burgundy, gold)
 - **Vercel AI SDK** with Anthropic, OpenAI, and Google providers
 - **jsPDF** for PDF export
+- **diff** for word-level text comparison
 - **localStorage** for persistence (Supabase preparation layer exists for future cloud sync)
 
 ## Roadmap
@@ -108,7 +116,6 @@ The fan-out API route receives a prompt and dispatches it simultaneously to both
 - [ ] Prompt history browser
 - [ ] Supabase cloud persistence and sharing
 - [ ] Streaming responses
-- [ ] Synchronized scrolling option
 - [ ] Tutorial/cards system for guided analytical exercises
 
 ## Related Work

@@ -17,7 +17,6 @@ import {
   Check,
   Trash2,
   ChevronDown,
-  Type,
   SlidersHorizontal,
   Minus,
   Plus,
@@ -27,6 +26,7 @@ import {
   X,
   Moon,
   Sun,
+  GitCompareArrows,
 } from "lucide-react";
 import { useProviderSettings } from "@/context/ProviderSettingsContext";
 import {
@@ -48,7 +48,10 @@ import {
   exportAsText,
   exportAsPDF,
   downloadFile,
+  type PdfDiffData,
 } from "@/lib/export/comparison-export";
+import { DiffRenderedText } from "@/components/workspace/DiffPanel";
+import { computeWordDiff, type DiffSegment } from "@/lib/diff/word-diff";
 import {
   DEFAULT_ANNOTATION_DISPLAY_SETTINGS,
   type AnnotationDisplaySettings,
@@ -113,6 +116,9 @@ function AnnotatedPanelDisplay({
   annotationFontFamily,
   annotationFontSize,
   isDark,
+  diffSegments,
+  diffUniqueCount,
+  bodyScrollRef,
 }: {
   panel: "A" | "B";
   result: PanelResult | null;
@@ -125,6 +131,9 @@ function AnnotatedPanelDisplay({
   annotationFontFamily: string;
   annotationFontSize: number;
   isDark: boolean;
+  diffSegments?: DiffSegment[];
+  diffUniqueCount?: number;
+  bodyScrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const editCallbacks = useMemo(
     () => ({
@@ -173,10 +182,25 @@ function AnnotatedPanelDisplay({
                     {(provenance.responseTimeMs / 1000).toFixed(1)}s
                   </span>
                 </div>
-                <div className="flex items-center gap-1 text-caption text-muted-foreground">
-                  <Type className="w-3 h-3" />
-                  <span>{wc!.toLocaleString()}w</span>
-                </div>
+                <span className="text-caption text-muted-foreground">
+                  {wc!.toLocaleString()} words
+                </span>
+                {diffSegments && diffUniqueCount !== undefined && (
+                  <div className="flex items-center gap-1 text-caption">
+                    <span className={`inline-block w-2 h-2 rounded-sm ${
+                      panel === "A"
+                        ? "bg-red-300 dark:bg-red-700"
+                        : "bg-green-300 dark:bg-green-700"
+                    }`} />
+                    <span className={
+                      panel === "A"
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-green-600 dark:text-green-400"
+                    }>
+                      {diffUniqueCount} unique
+                    </span>
+                  </div>
+                )}
               </>
             )}
           </>
@@ -207,6 +231,14 @@ function AnnotatedPanelDisplay({
             <AlertCircle className="w-8 h-8 mx-auto mb-3 opacity-60" />
             <p className="text-body-sm">{errorText}</p>
           </div>
+        </div>
+      ) : diffSegments && outputText !== null ? (
+        <div ref={bodyScrollRef} className="flex-1 min-h-0 overflow-y-auto">
+          <DiffRenderedText
+            segments={diffSegments}
+            fontSize={fontSize}
+            fontFamily={proseFontFamily}
+          />
         </div>
       ) : outputText !== null ? (
         <div className="flex-1 min-h-0">
@@ -285,8 +317,64 @@ export default function Home() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
 
   const hasContent = resultA !== null || resultB !== null;
+  const hasBothOutputs =
+    resultA !== null &&
+    isPanelOutput(resultA) &&
+    resultB !== null &&
+    isPanelOutput(resultB);
+
+  // Word diff computation
+  const diffResult = useMemo(() => {
+    if (!showDiff || !hasBothOutputs) return null;
+    return computeWordDiff(
+      (resultA as { text: string }).text,
+      (resultB as { text: string }).text
+    );
+  }, [showDiff, hasBothOutputs, resultA, resultB]);
+
+  const diffUniqueA = diffResult
+    ? diffResult.segmentsA.filter((s) => s.type === "removed").length
+    : 0;
+  const diffUniqueB = diffResult
+    ? diffResult.segmentsB.filter((s) => s.type === "added").length
+    : 0;
+
+  // Synchronised scrolling for diff mode
+  const diffScrollARef = useRef<HTMLDivElement>(null);
+  const diffScrollBRef = useRef<HTMLDivElement>(null);
+  const diffSyncing = useRef(false);
+
+  useEffect(() => {
+    if (!showDiff) return;
+    const elA = diffScrollARef.current;
+    const elB = diffScrollBRef.current;
+    if (!elA || !elB) return;
+
+    function handleScrollA() {
+      if (diffSyncing.current) return;
+      diffSyncing.current = true;
+      const ratio = elA!.scrollTop / (elA!.scrollHeight - elA!.clientHeight || 1);
+      elB!.scrollTop = ratio * (elB!.scrollHeight - elB!.clientHeight || 1);
+      diffSyncing.current = false;
+    }
+    function handleScrollB() {
+      if (diffSyncing.current) return;
+      diffSyncing.current = true;
+      const ratio = elB!.scrollTop / (elB!.scrollHeight - elB!.clientHeight || 1);
+      elA!.scrollTop = ratio * (elA!.scrollHeight - elA!.clientHeight || 1);
+      diffSyncing.current = false;
+    }
+
+    elA.addEventListener("scroll", handleScrollA);
+    elB.addEventListener("scroll", handleScrollB);
+    return () => {
+      elA.removeEventListener("scroll", handleScrollA);
+      elB.removeEventListener("scroll", handleScrollB);
+    };
+  }, [showDiff]);
 
   // Click-outside handling for dropdowns
   const historyRef = useRef<HTMLDivElement>(null);
@@ -410,9 +498,12 @@ export default function Home() {
 
   const handleExportPDF = useCallback(() => {
     const comparison = buildComparison();
-    exportAsPDF(comparison);
+    const pdfDiff: PdfDiffData | undefined = diffResult
+      ? { segmentsA: diffResult.segmentsA, segmentsB: diffResult.segmentsB }
+      : undefined;
+    exportAsPDF(comparison, pdfDiff);
     setShowExportModal(false);
-  }, [buildComparison]);
+  }, [buildComparison, diffResult]);
 
   const handleDeleteSaved = useCallback(
     (id: string) => {
@@ -664,6 +755,23 @@ export default function Home() {
             )}
           </div>
 
+          <div className="h-4 w-px bg-parchment mx-1" />
+
+          {/* Diff toggle */}
+          <button
+            onClick={() => setShowDiff((d) => !d)}
+            disabled={!hasBothOutputs}
+            className={`px-2 py-1 text-caption flex items-center gap-1.5 rounded-sm transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+              showDiff
+                ? "bg-burgundy/90 text-white dark:bg-burgundy/80"
+                : "btn-editorial-ghost"
+            }`}
+            title="Toggle word diff view"
+          >
+            <GitCompareArrows className="w-3.5 h-3.5" />
+            <span>{showDiff ? "Diff On" : "Diff"}</span>
+          </button>
+
           <div className="flex-1" />
 
           {/* History dropdown */}
@@ -733,7 +841,7 @@ export default function Home() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Dual panels: side-by-side on md+, stacked on mobile */}
+        {/* Dual panels (always rendered, diff props injected when active) */}
         <div className="flex-1 flex flex-col md:flex-row min-h-0">
           <AnnotatedPanelDisplay
             panel="A"
@@ -747,6 +855,9 @@ export default function Home() {
             annotationFontFamily={getFontCss(annotationFontFamily)}
             annotationFontSize={annotationFontSize}
             isDark={isDark}
+            diffSegments={diffResult?.segmentsA}
+            diffUniqueCount={diffResult ? diffUniqueA : undefined}
+            bodyScrollRef={diffScrollARef}
           />
           <div className="hidden md:block w-px bg-border" />
           <div className="md:hidden h-px bg-border" />
@@ -762,6 +873,9 @@ export default function Home() {
             annotationFontFamily={getFontCss(annotationFontFamily)}
             annotationFontSize={annotationFontSize}
             isDark={isDark}
+            diffSegments={diffResult?.segmentsB}
+            diffUniqueCount={diffResult ? diffUniqueB : undefined}
+            bodyScrollRef={diffScrollBRef}
           />
         </div>
 
