@@ -17,9 +17,9 @@
 
 **Author:** David M. Berry
 **Institution:** University of Sussex
-**Version:** 2.2.25
+**Version:** 2.2.26
 **Date:** 28 July 2026
-**Licence:** MIT
+**Licence:** GPL-3.0-or-later
 
 
 
@@ -406,4 +406,8 @@ LLMbench adapts the annotation infrastructure from the [Critical Code Studies Wo
 
 ## Licence
 
-MIT
+Copyright (C) 2026 David M. Berry.
+
+LLMbench is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See the [LICENSE](LICENSE) file for the full text.
+
+**Relicensing note.** LLMbench was previously released under the MIT Licence. As the sole copyright holder, David M. Berry relicenses the software under GPL-3.0-or-later. This relicensing applies retroactively to all earlier versions and releases: every prior version is also available under the terms of the GNU General Public License, version 3 or later. Any copies obtained under the earlier MIT terms remain valid under those terms, as MIT permits.

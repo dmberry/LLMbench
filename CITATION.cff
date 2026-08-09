@@ -14,8 +14,8 @@ authors:
     affiliation: "University of Sussex"
 repository-code: "https://github.com/vector-lab-tools/LLMbench"
 url: "https://vector-lab-tools.github.io"
-license: MIT
-version: "2.2.25"
+license: GPL-3.0-or-later
+version: "2.2.26"
 date-released: "2026-07-28"
 keywords:
   - large language models
